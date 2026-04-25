@@ -1,0 +1,10 @@
+{
+  "name": "proxychecker",
+  "version": "1.0.0",
+  "main": "app.js",
+  "dependencies": {
+    "http-proxy-agent": "^7.0.2",
+    "https-proxy-agent": "^7.0.4",
+    "socks-proxy-agent": "^8.0.2"
+  }
+}
