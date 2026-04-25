@@ -4,59 +4,102 @@ const url = require("url");
 
 const PORT = process.env.PORT || 10000;
 
-function checkProxy(proxy, callback) {
-  const options = {
-    host: "api.ipify.org",
-    port: 80,
-    path: "/",
-    method: "GET",
-    headers: {
-      Host: "api.ipify.org"
-    },
-    timeout: 5000
-  };
-
-  const req = http.request(options, (res) => {
-    callback(true);
+function fetchGeo(ip) {
+  return new Promise((resolve) => {
+    https.get(`https://ipapi.co/${ip}/json/`, (resp) => {
+      let data = "";
+      resp.on("data", chunk => data += chunk);
+      resp.on("end", () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch {
+          resolve({});
+        }
+      });
+    }).on("error", () => resolve({}));
   });
-
-  req.on("error", () => callback(false));
-  req.on("timeout", () => {
-    req.destroy();
-    callback(false);
-  });
-
-  req.end();
 }
 
-const server = http.createServer((req, res) => {
-  const parsedUrl = url.parse(req.url, true);
+function checkProxy(proxy) {
+  return new Promise((resolve) => {
+    const start = Date.now();
 
-  if (parsedUrl.pathname === "/check") {
-    const proxy = parsedUrl.query.proxy;
+    const req = http.get("http://api.ipify.org", (res) => {
+      let data = "";
+      res.on("data", chunk => data += chunk);
+      res.on("end", async () => {
+        const speed = Date.now() - start;
+        const geo = await fetchGeo(data.trim());
 
-    if (!proxy) {
-      res.writeHead(400);
-      return res.end("No proxy provided");
-    }
-
-    checkProxy(proxy, (alive) => {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        proxy,
-        status: alive ? "working" : "dead"
-      }));
+        resolve({
+          proxy,
+          status: "working",
+          ip: data.trim(),
+          country: geo.country_name || "Unknown",
+          city: geo.city || "Unknown",
+          speed: speed + " ms"
+        });
+      });
     });
 
+    req.on("error", () => {
+      resolve({
+        proxy,
+        status: "dead"
+      });
+    });
+
+    req.setTimeout(5000, () => {
+      req.destroy();
+      resolve({
+        proxy,
+        status: "timeout"
+      });
+    });
+  });
+}
+
+const html = `
+<!DOCTYPE html>
+<html>
+<head>
+<title>Advanced Proxy Checker</title>
+<style>
+body{background:#111;color:#fff;font-family:Arial;text-align:center;padding:20px}
+input{padding:10px;width:300px}
+button{padding:10px;background:green;color:#fff;border:none}
+#result{margin-top:20px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<h1>Advanced Proxy Checker</h1>
+<input id="proxy" placeholder="IP:PORT">
+<button onclick="check()">Check</button>
+<div id="result"></div>
+<script>
+async function check(){
+let proxy=document.getElementById('proxy').value;
+let res=await fetch('/check?proxy='+proxy);
+let data=await res.json();
+document.getElementById('result').innerText=JSON.stringify(data,null,2);
+}
+</script>
+</body>
+</html>
+`;
+
+const server = http.createServer(async (req, res) => {
+  const parsed = url.parse(req.url, true);
+
+  if (parsed.pathname === "/check") {
+    const proxy = parsed.query.proxy;
+    const result = await checkProxy(proxy);
+    res.writeHead(200, {"Content-Type":"application/json"});
+    res.end(JSON.stringify(result));
   } else {
-    res.writeHead(200, { "Content-Type": "text/html" });
-    res.end(`
-      <h1>Proxy Checker</h1>
-      <p>Use /check?proxy=IP:PORT</p>
-    `);
+    res.writeHead(200, {"Content-Type":"text/html"});
+    res.end(html);
   }
 });
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log("Server running on port " + PORT);
-});
+server.listen(PORT, "0.0.0.0");
